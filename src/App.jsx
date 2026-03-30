@@ -46,6 +46,9 @@ export default function App() {
   const [agreeCount, setAgreeCount] = useState(0);
   const [disagreeCount, setDisagreeCount] = useState(0);
 
+  // 이전으로 되돌아가기용 히스토리
+  const [history, setHistory] = useState([]);  // [{idx, item_id, judgment}]
+
   // 모달
   const [showJsonModal, setShowJsonModal] = useState(false);
   const [jsonModalText, setJsonModalText] = useState("");
@@ -163,6 +166,9 @@ export default function App() {
       setTotalReviewed(prev => prev + 1);
     }
 
+    // 히스토리에 추가
+    setHistory(prev => [...prev, { idx: currentIdx, item_id: item.id, judgment: type }]);
+
     // 다음 항목
     const newReviewed = new Set([...reviewedIds, item.id]);
     setReviewedIds(newReviewed);
@@ -178,6 +184,48 @@ export default function App() {
     } else {
       setPhase("complete");
     }
+  };
+
+  // ── 이전으로 되돌아가기 (DB에서 삭제 후 다시 판단) ──
+  const handleGoBack = async () => {
+    if (history.length === 0) return;
+
+    setSaving(true);
+    const prev = history[history.length - 1];
+
+    // DB에서 삭제
+    await api("/api/result", {
+      method: "DELETE",
+      body: JSON.stringify({ item_id: prev.item_id }),
+    });
+
+    // 통계 복구
+    if (prev.judgment === "agree") setAgreeCount(c => Math.max(0, c - 1));
+    else setDisagreeCount(c => Math.max(0, c - 1));
+    setTotalReviewed(c => Math.max(0, c - 1));
+
+    // reviewed에서 제거
+    const newReviewed = new Set(reviewedIds);
+    newReviewed.delete(prev.item_id);
+    setReviewedIds(newReviewed);
+
+    // 히스토리에서 제거
+    setHistory(h => h.slice(0, -1));
+
+    // 이전 항목으로 이동
+    setCurrentIdx(prev.idx);
+    setJudgment(null);
+    setCorrectedLabels([]);
+    setStartTime(Date.now());
+    setSaving(false);
+  };
+
+  // ── 나가기 (로그인 화면으로) ──
+  const handleExit = () => {
+    sessionStorage.removeItem("review_pw");
+    setPhase("login");
+    setPassword("");
+    setHistory([]);
   };
 
   const toggleCorrectedLabel = (label) => {
@@ -309,6 +357,22 @@ export default function App() {
         <span>맞음: {agreeCount}</span>
         <span>틀림: {disagreeCount}</span>
         <span>남은: {totalItems - totalReviewed - 1}</span>
+      </div>
+
+      <div style={{ display: "flex", gap: 8, justifyContent: "center", marginTop: 12 }}>
+        <button
+          style={{...styles.btnSmall, borderColor: history.length > 0 ? "#4361ee" : "#ccc", color: history.length > 0 ? "#4361ee" : "#ccc"}}
+          onClick={handleGoBack}
+          disabled={history.length === 0 || saving}
+        >
+          ← 이전으로
+        </button>
+        <button
+          style={{...styles.btnSmall, borderColor: "#888", color: "#888"}}
+          onClick={handleExit}
+        >
+          나가기
+        </button>
       </div>
     </div>
   );
