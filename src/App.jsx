@@ -134,24 +134,11 @@ export default function App() {
 
     setSaving(false);
 
-    if (res.error === "이미 검수된 항목입니다.") {
-      // 이미 검수된 항목 — 통계 증가 없이 다음으로 넘어감
-      setJudgment(null);
-      setCorrectedLabels([]);
-      const nextIdx = currentIdx + 1;
-      if (nextIdx < items.length) {
-        setCurrentIdx(nextIdx);
-        setStartTime(Date.now());
-      }
-      setSaving(false);
-      return;
-    }
+    if (!res.success) return;
 
-    if (res.success) {
-      if (type === "agree") setAgreeCount(prev => prev + 1);
-      else setDisagreeCount(prev => prev + 1);
-      setTotalReviewed(prev => prev + 1);
-    }
+    if (type === "agree") setAgreeCount(prev => prev + 1);
+    else setDisagreeCount(prev => prev + 1);
+    setTotalReviewed(prev => prev + 1);
 
     // 히스토리에 추가
     setHistory(prev => [...prev, { idx: currentIdx, item_id: item.id, judgment: type }]);
@@ -176,27 +163,42 @@ export default function App() {
 
   // ── 이전으로 되돌아가기 (DB에서 삭제 후 다시 판단) ──
   const handleGoBack = async () => {
-    if (history.length === 0) return;
-
     setSaving(true);
-    const prev = history[history.length - 1];
 
-    // DB에서 삭제
-    await api("/api/result", {
-      method: "DELETE",
-      body: JSON.stringify({ item_id: prev.item_id }),
-    });
+    if (history.length > 0) {
+      // 현재 세션 히스토리에서 되돌리기
+      const prev = history[history.length - 1];
 
-    // 통계 복구
-    if (prev.judgment === "agree") setAgreeCount(c => Math.max(0, c - 1));
-    else setDisagreeCount(c => Math.max(0, c - 1));
-    setTotalReviewed(c => Math.max(0, c - 1));
+      await api("/api/result", {
+        method: "DELETE",
+        body: JSON.stringify({ item_id: prev.item_id }),
+      });
 
-    // 히스토리에서 제거
-    setHistory(h => h.slice(0, -1));
+      if (prev.judgment === "agree") setAgreeCount(c => Math.max(0, c - 1));
+      else setDisagreeCount(c => Math.max(0, c - 1));
+      setTotalReviewed(c => Math.max(0, c - 1));
 
-    // 이전 항목으로 이동
-    setCurrentIdx(prev.idx);
+      setHistory(h => h.slice(0, -1));
+      setCurrentIdx(prev.idx);
+    } else {
+      // 이전 세션 — DB에서 마지막 검수 항목 조회 후 삭제
+      const last = await api("/api/result");
+      if (last.error) { setSaving(false); return; }
+
+      await api("/api/result", {
+        method: "DELETE",
+        body: JSON.stringify({ item_id: last.item.id }),
+      });
+
+      if (last.judgment === "agree") setAgreeCount(c => Math.max(0, c - 1));
+      else setDisagreeCount(c => Math.max(0, c - 1));
+      setTotalReviewed(c => Math.max(0, c - 1));
+
+      // 해당 항목을 현재 items 앞에 추가하고 표시
+      setItems(prev => [last.item, ...prev]);
+      setCurrentIdx(0);
+    }
+
     setJudgment(null);
     setCorrectedLabels([]);
     setStartTime(Date.now());
@@ -344,9 +346,9 @@ export default function App() {
 
       <div style={{ display: "flex", gap: 8, justifyContent: "center", marginTop: 12 }}>
         <button
-          style={{...styles.btnSmall, borderColor: history.length > 0 ? "#4361ee" : "#ccc", color: history.length > 0 ? "#4361ee" : "#ccc"}}
+          style={{...styles.btnSmall, borderColor: totalReviewed > 0 ? "#4361ee" : "#ccc", color: totalReviewed > 0 ? "#4361ee" : "#ccc"}}
           onClick={handleGoBack}
-          disabled={history.length === 0 || saving}
+          disabled={totalReviewed === 0 || saving}
         >
           ← 이전으로
         </button>

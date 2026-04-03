@@ -7,6 +7,33 @@ export default async function handler(req, res) {
 
   const supabase = getSupabase();
 
+  // ── GET: 마지막 검수 항목 조회 ──
+  if (req.method === "GET") {
+    const { data: lastReview, error: revErr } = await supabase
+      .from("review_results")
+      .select("item_id, judgment")
+      .order("id", { ascending: false })
+      .limit(1);
+
+    if (revErr) return res.status(500).json({ error: revErr.message });
+    if (!lastReview || lastReview.length === 0) {
+      return res.status(404).json({ error: "검수 내역이 없습니다." });
+    }
+
+    const { data: item, error: itemErr } = await supabase
+      .from("review_items")
+      .select("id, title, labels, reason")
+      .eq("id", lastReview[0].item_id)
+      .limit(1);
+
+    if (itemErr) return res.status(500).json({ error: itemErr.message });
+
+    return res.status(200).json({
+      item: item[0],
+      judgment: lastReview[0].judgment,
+    });
+  }
+
   // ── DELETE: 검수 결과 삭제 (되돌아가기) ──
   if (req.method === "DELETE") {
     const { item_id } = req.body || {};
@@ -23,7 +50,7 @@ export default async function handler(req, res) {
   }
 
   // ── POST: 검수 결과 저장 ──
-  if (req.method !== "POST") return res.status(405).json({ error: "POST or DELETE only" });
+  if (req.method !== "POST") return res.status(405).json({ error: "GET, POST or DELETE only" });
   const { item_id, judgment, corrected_labels, duration } = req.body || {};
 
   if (!item_id || !judgment) {
