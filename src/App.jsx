@@ -85,8 +85,8 @@ export default function App() {
         if (prog.reviewed >= prog.total_items && prog.total_items > 0) {
           setPhase("complete");
         } else {
-          // 서버에서 미검수 항목만 가져옴
-          const res = await api(`/api/items?limit=${BATCH_SIZE}`);
+          // 검수 완료 수를 offset으로 사용하여 다음 미검수 항목부터 로드
+          const res = await api(`/api/items?offset=${prog.reviewed}&limit=${BATCH_SIZE}`);
           setItems(res.items || []);
           setCurrentIdx(0);
           setPhase("review");
@@ -101,8 +101,9 @@ export default function App() {
   }, [phase]);
 
   // ── 추가 배치 로드 ──
-  const loadMoreItems = async () => {
-    const res = await api(`/api/items?limit=${BATCH_SIZE}`);
+  const loadMoreItems = async (reviewedCount) => {
+    const offset = reviewedCount;
+    const res = await api(`/api/items?offset=${offset}&limit=${BATCH_SIZE}`);
     const newItems = res.items || [];
     if (newItems.length > 0) {
       setItems(newItems);
@@ -160,13 +161,14 @@ export default function App() {
     setCorrectedLabels([]);
 
     const nextIdx = currentIdx + 1;
+    const newReviewedCount = totalReviewed + 1;
     if (nextIdx < items.length) {
       setCurrentIdx(nextIdx);
       setStartTime(Date.now());
-    } else if (totalReviewed + 1 < totalItems) {
+    } else if (newReviewedCount < totalItems) {
       // 새 배치 로드 시 히스토리 초기화 (이전 배치 항목으로 돌아갈 수 없으므로)
       setHistory([]);
-      await loadMoreItems();
+      await loadMoreItems(newReviewedCount);
     } else {
       setPhase("complete");
     }
