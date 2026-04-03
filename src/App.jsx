@@ -136,19 +136,22 @@ export default function App() {
 
     if (!res.success) return;
 
-    if (type === "agree") setAgreeCount(prev => prev + 1);
-    else setDisagreeCount(prev => prev + 1);
-    setTotalReviewed(prev => prev + 1);
+    const isNew = !res.is_update;
+    if (isNew) {
+      if (type === "agree") setAgreeCount(prev => prev + 1);
+      else setDisagreeCount(prev => prev + 1);
+      setTotalReviewed(prev => prev + 1);
+    }
 
     // 히스토리에 추가
-    setHistory(prev => [...prev, { idx: currentIdx, item_id: item.id, judgment: type }]);
+    setHistory(prev => [...prev, { idx: currentIdx, item_id: item.id, judgment: type, isNew }]);
 
     // 다음 항목
     setJudgment(null);
     setCorrectedLabels([]);
 
     const nextIdx = currentIdx + 1;
-    const newReviewedCount = totalReviewed + 1;
+    const newReviewedCount = isNew ? totalReviewed + 1 : totalReviewed;
     if (nextIdx < items.length) {
       setCurrentIdx(nextIdx);
       setStartTime(Date.now());

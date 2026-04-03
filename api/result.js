@@ -57,6 +57,15 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: "item_id, judgment 필수" });
   }
 
+  // insert인지 update인지 확인
+  const { data: existing } = await supabase
+    .from("review_results")
+    .select("id")
+    .eq("item_id", item_id)
+    .limit(1);
+
+  const isUpdate = existing && existing.length > 0;
+
   const { data, error } = await supabase
     .from("review_results")
     .upsert({
@@ -69,5 +78,5 @@ export default async function handler(req, res) {
 
   if (error) return res.status(500).json({ error: error.message });
 
-  return res.status(200).json({ success: true, result: data[0] });
+  return res.status(200).json({ success: true, result: data[0], is_update: isUpdate });
 }
