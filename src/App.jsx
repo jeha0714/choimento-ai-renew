@@ -30,7 +30,6 @@ export default function App() {
 
   // 검수 데이터
   const [items, setItems] = useState([]);
-  const [reviewedIds, setReviewedIds] = useState(new Set());
   const [totalItems, setTotalItems] = useState(0);
   const [totalReviewed, setTotalReviewed] = useState(0);
   const [currentIdx, setCurrentIdx] = useState(0);
@@ -83,19 +82,13 @@ export default function App() {
         setAgreeCount(prog.agree);
         setDisagreeCount(prog.disagree);
 
-        // 첫 배치 로드
-        const res = await api(`/api/items?offset=0&limit=${BATCH_SIZE}`);
-        setItems(res.items || []);
-        setReviewedIds(new Set(res.reviewed_ids || []));
-
-        // 검수 안 된 첫 항목 찾기
-        const rSet = new Set(res.reviewed_ids || []);
-        const firstUnreviewed = (res.items || []).findIndex(item => !rSet.has(item.id));
-        setCurrentIdx(firstUnreviewed >= 0 ? firstUnreviewed : 0);
-
         if (prog.reviewed >= prog.total_items && prog.total_items > 0) {
           setPhase("complete");
         } else {
+          // 검수 완료 수를 offset으로 사용하여 다음 미검수 항목부터 로드
+          const res = await api(`/api/items?offset=${prog.reviewed}&limit=${BATCH_SIZE}`);
+          setItems(res.items || []);
+          setCurrentIdx(0);
           setPhase("review");
           setStartTime(Date.now());
         }
@@ -107,32 +100,15 @@ export default function App() {
     })();
   }, [phase]);
 
-  // ── 다음 미검수 항목 찾기 ──
-  const findNextUnreviewed = (fromIdx, currentItems, currentReviewed) => {
-    for (let i = fromIdx; i < currentItems.length; i++) {
-      if (!currentReviewed.has(currentItems[i].id)) return i;
-    }
-    return -1;
-  };
-
   // ── 추가 배치 로드 ──
-  const loadMoreItems = async (offset) => {
+  const loadMoreItems = async (reviewedCount) => {
+    const offset = reviewedCount;
     const res = await api(`/api/items?offset=${offset}&limit=${BATCH_SIZE}`);
     const newItems = res.items || [];
-    const newReviewedIds = new Set([...reviewedIds, ...(res.reviewed_ids || [])]);
-    setReviewedIds(newReviewedIds);
     if (newItems.length > 0) {
-      const combined = [...items, ...newItems];
-      setItems(combined);
-      const nextIdx = findNextUnreviewed(items.length, combined, newReviewedIds);
-      if (nextIdx >= 0) {
-        setCurrentIdx(nextIdx);
-        setStartTime(Date.now());
-      } else if (offset + BATCH_SIZE < totalItems) {
-        await loadMoreItems(offset + BATCH_SIZE);
-      } else {
-        setPhase("complete");
-      }
+      setItems(newItems);
+      setCurrentIdx(0);
+      setStartTime(Date.now());
     } else {
       setPhase("complete");
     }
@@ -159,8 +135,19 @@ export default function App() {
     setSaving(false);
 
     if (res.error === "이미 검수된 항목입니다.") {
-      // 건너뛰기
-    } else if (res.success) {
+      // 이미 검수된 항목 — 통계 증가 없이 다음으로 넘어감
+      setJudgment(null);
+      setCorrectedLabels([]);
+      const nextIdx = currentIdx + 1;
+      if (nextIdx < items.length) {
+        setCurrentIdx(nextIdx);
+        setStartTime(Date.now());
+      }
+      setSaving(false);
+      return;
+    }
+
+    if (res.success) {
       if (type === "agree") setAgreeCount(prev => prev + 1);
       else setDisagreeCount(prev => prev + 1);
       setTotalReviewed(prev => prev + 1);
@@ -170,17 +157,18 @@ export default function App() {
     setHistory(prev => [...prev, { idx: currentIdx, item_id: item.id, judgment: type }]);
 
     // 다음 항목
-    const newReviewed = new Set([...reviewedIds, item.id]);
-    setReviewedIds(newReviewed);
     setJudgment(null);
     setCorrectedLabels([]);
 
-    const nextIdx = findNextUnreviewed(currentIdx + 1, items, newReviewed);
-    if (nextIdx >= 0) {
+    const nextIdx = currentIdx + 1;
+    const newReviewedCount = totalReviewed + 1;
+    if (nextIdx < items.length) {
       setCurrentIdx(nextIdx);
       setStartTime(Date.now());
-    } else if (items.length < totalItems) {
-      await loadMoreItems(items.length);
+    } else if (newReviewedCount < totalItems) {
+      // 새 배치 로드 시 히스토리 초기화 (이전 배치 항목으로 돌아갈 수 없으므로)
+      setHistory([]);
+      await loadMoreItems(newReviewedCount);
     } else {
       setPhase("complete");
     }
@@ -203,11 +191,6 @@ export default function App() {
     if (prev.judgment === "agree") setAgreeCount(c => Math.max(0, c - 1));
     else setDisagreeCount(c => Math.max(0, c - 1));
     setTotalReviewed(c => Math.max(0, c - 1));
-
-    // reviewed에서 제거
-    const newReviewed = new Set(reviewedIds);
-    newReviewed.delete(prev.item_id);
-    setReviewedIds(newReviewed);
 
     // 히스토리에서 제거
     setHistory(h => h.slice(0, -1));
