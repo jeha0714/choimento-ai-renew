@@ -31,7 +31,7 @@ export default function App() {
   // 검수 데이터
   const [items, setItems] = useState([]);
   const [totalItems, setTotalItems] = useState(0);
-  const [totalReviewed, setTotalReviewed] = useState(0);
+  const [position, setPosition] = useState(0);
   const [currentIdx, setCurrentIdx] = useState(0);
   const [loading, setLoading] = useState(false);
 
@@ -46,11 +46,7 @@ export default function App() {
   const [disagreeCount, setDisagreeCount] = useState(0);
 
   // 이전으로 되돌아가기용 히스토리
-  const [history, setHistory] = useState([]);  // [{idx, item_id, judgment}]
-
-  // 모달
-  const [showJsonModal, setShowJsonModal] = useState(false);
-  const [jsonModalText, setJsonModalText] = useState("");
+  const [history, setHistory] = useState([]);
 
   // ── 로그인 ──
   const handleLogin = async () => {
@@ -75,18 +71,16 @@ export default function App() {
     (async () => {
       setLoading(true);
       try {
-        // 진행 상황 먼저
         const prog = await api("/api/progress");
         setTotalItems(prog.total_items);
-        setTotalReviewed(prog.reviewed);
+        setPosition(prog.position);
         setAgreeCount(prog.agree);
         setDisagreeCount(prog.disagree);
 
-        if (prog.reviewed >= prog.total_items && prog.total_items > 0) {
+        if (prog.position >= prog.total_items && prog.total_items > 0) {
           setPhase("complete");
         } else {
-          // 검수 완료 수를 offset으로 사용하여 다음 미검수 항목부터 로드
-          const res = await api(`/api/items?offset=${prog.reviewed}&limit=${BATCH_SIZE}`);
+          const res = await api(`/api/items?offset=${prog.position}&limit=${BATCH_SIZE}`);
           setItems(res.items || []);
           setCurrentIdx(0);
           setPhase("review");
@@ -101,8 +95,7 @@ export default function App() {
   }, [phase]);
 
   // ── 추가 배치 로드 ──
-  const loadMoreItems = async (reviewedCount) => {
-    const offset = reviewedCount;
+  const loadMoreItems = async (offset) => {
     const res = await api(`/api/items?offset=${offset}&limit=${BATCH_SIZE}`);
     const newItems = res.items || [];
     if (newItems.length > 0) {
@@ -136,40 +129,36 @@ export default function App() {
 
     if (!res.success) return;
 
-    const isNew = !res.is_update;
-    if (isNew) {
-      if (type === "agree") setAgreeCount(prev => prev + 1);
-      else setDisagreeCount(prev => prev + 1);
-      setTotalReviewed(prev => prev + 1);
-    }
+    // 서버에서 커서 +1 완료, 클라이언트도 동기화
+    if (type === "agree") setAgreeCount(prev => prev + 1);
+    else setDisagreeCount(prev => prev + 1);
+    const newPosition = position + 1;
+    setPosition(newPosition);
 
     // 히스토리에 추가
-    setHistory(prev => [...prev, { idx: currentIdx, item_id: item.id, judgment: type, isNew }]);
+    setHistory(prev => [...prev, { idx: currentIdx, item_id: item.id, judgment: type }]);
 
     // 다음 항목
     setJudgment(null);
     setCorrectedLabels([]);
 
     const nextIdx = currentIdx + 1;
-    const newReviewedCount = isNew ? totalReviewed + 1 : totalReviewed;
     if (nextIdx < items.length) {
       setCurrentIdx(nextIdx);
       setStartTime(Date.now());
-    } else if (newReviewedCount < totalItems) {
-      // 새 배치 로드 시 히스토리 초기화 (이전 배치 항목으로 돌아갈 수 없으므로)
+    } else if (newPosition < totalItems) {
       setHistory([]);
-      await loadMoreItems(newReviewedCount);
+      await loadMoreItems(newPosition);
     } else {
       setPhase("complete");
     }
   };
 
-  // ── 이전으로 되돌아가기 (DB에서 삭제 후 다시 판단) ──
+  // ── 이전으로 되돌아가기 ──
   const handleGoBack = async () => {
     setSaving(true);
 
     if (history.length > 0) {
-      // 현재 세션 히스토리에서 되돌리기
       const prev = history[history.length - 1];
 
       await api("/api/result", {
@@ -179,12 +168,12 @@ export default function App() {
 
       if (prev.judgment === "agree") setAgreeCount(c => Math.max(0, c - 1));
       else setDisagreeCount(c => Math.max(0, c - 1));
-      setTotalReviewed(c => Math.max(0, c - 1));
+      setPosition(p => Math.max(0, p - 1));
 
       setHistory(h => h.slice(0, -1));
       setCurrentIdx(prev.idx);
     } else {
-      // 이전 세션 — DB에서 마지막 검수 항목 조회 후 삭제
+      // 이전 세션 — 서버에서 마지막 검수 항목 조회 후 삭제
       const last = await api("/api/result");
       if (last.error) { setSaving(false); return; }
 
@@ -195,9 +184,8 @@ export default function App() {
 
       if (last.judgment === "agree") setAgreeCount(c => Math.max(0, c - 1));
       else setDisagreeCount(c => Math.max(0, c - 1));
-      setTotalReviewed(c => Math.max(0, c - 1));
+      setPosition(p => Math.max(0, p - 1));
 
-      // 해당 항목을 현재 items 앞에 추가하고 표시
       setItems(prev => [last.item, ...prev]);
       setCurrentIdx(0);
     }
@@ -208,7 +196,7 @@ export default function App() {
     setSaving(false);
   };
 
-  // ── 나가기 (로그인 화면으로) ──
+  // ── 나가기 ──
   const handleExit = () => {
     sessionStorage.removeItem("review_pw");
     setPhase("login");
@@ -243,11 +231,8 @@ export default function App() {
     statNum: { fontSize: 28, fontWeight: 700, color: "#4361ee" },
     statLabel: { fontSize: 12, color: "#888", marginTop: 2 },
     errBox: { background: "#fff5f5", border: "1px solid #e63946", borderRadius: 8, padding: "8px 12px", fontSize: 13, color: "#e63946", marginBottom: 12 },
-    modal: { position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 },
-    modalContent: { background: "#fff", borderRadius: 12, padding: 24, width: "90%", maxWidth: 600, maxHeight: "80vh", overflow: "auto" },
   };
 
-  // ── 로그인 화면 ──
   if (phase === "login") {
     return (
       <div style={styles.container}>
@@ -262,23 +247,20 @@ export default function App() {
     );
   }
 
-  // ── 로딩 화면 ──
   if (phase === "loading") {
     return (
       <div style={styles.container}><div style={styles.card}><div style={{ textAlign: "center", padding: 40, color: "#888" }}>데이터 로드 중...</div></div></div>
     );
   }
 
-  // ── 완료 화면 ──
   if (phase === "complete") {
-    const reviewed = totalReviewed;
-    const agreeRate = reviewed > 0 ? ((agreeCount / reviewed) * 100).toFixed(1) : "0";
+    const agreeRate = position > 0 ? ((agreeCount / position) * 100).toFixed(1) : "0";
     return (
       <div style={styles.container}>
         <div style={styles.card}>
           <div style={styles.title}>검수 완료</div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16, margin: "20px 0" }}>
-            <div style={styles.stat}><div style={styles.statNum}>{reviewed}</div><div style={styles.statLabel}>총 검수</div></div>
+            <div style={styles.stat}><div style={styles.statNum}>{position}</div><div style={styles.statLabel}>총 검수</div></div>
             <div style={styles.stat}><div style={{...styles.statNum, color: "#2a9d8f"}}>{agreeCount}</div><div style={styles.statLabel}>맞음</div></div>
             <div style={styles.stat}><div style={{...styles.statNum, color: "#e76f51"}}>{disagreeCount}</div><div style={styles.statLabel}>틀림</div></div>
           </div>
@@ -291,19 +273,18 @@ export default function App() {
     );
   }
 
-  // ── 검수 화면 ──
   const item = items[currentIdx];
   if (!item) return <div style={styles.container}><div style={styles.card}><div style={{ textAlign: "center", padding: 40, color: "#888" }}>항목을 찾는 중...</div></div></div>;
 
   const aiLabels = item.labels || [];
   const aiReason = item.reason || "";
-  const pct = totalItems > 0 ? ((totalReviewed + 1) / totalItems * 100).toFixed(1) : "0";
+  const pct = totalItems > 0 ? ((position + 1) / totalItems * 100).toFixed(1) : "0";
   const isDisagreeMode = judgment === "disagree";
 
   return (
     <div style={styles.container}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-        <span style={{ fontSize: 13, color: "#888" }}>{totalReviewed + 1} / {totalItems}</span>
+        <span style={{ fontSize: 13, color: "#888" }}>{position + 1} / {totalItems}</span>
         <span style={{ fontSize: 13, color: "#888" }}>{pct}%</span>
       </div>
       <div style={styles.progress}><div style={styles.progressBar(pct)} /></div>
@@ -344,14 +325,14 @@ export default function App() {
       <div style={{ display: "flex", justifyContent: "center", gap: 24, marginTop: 16, fontSize: 13, color: "#888" }}>
         <span>맞음: {agreeCount}</span>
         <span>틀림: {disagreeCount}</span>
-        <span>남은: {totalItems - totalReviewed - 1}</span>
+        <span>남은: {totalItems - position - 1}</span>
       </div>
 
       <div style={{ display: "flex", gap: 8, justifyContent: "center", marginTop: 12 }}>
         <button
-          style={{...styles.btnSmall, borderColor: totalReviewed > 0 ? "#4361ee" : "#ccc", color: totalReviewed > 0 ? "#4361ee" : "#ccc"}}
+          style={{...styles.btnSmall, borderColor: position > 0 ? "#4361ee" : "#ccc", color: position > 0 ? "#4361ee" : "#ccc"}}
           onClick={handleGoBack}
-          disabled={totalReviewed === 0 || saving}
+          disabled={position === 0 || saving}
         >
           ← 이전으로
         </button>
