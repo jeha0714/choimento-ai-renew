@@ -7,20 +7,25 @@ export default async function handler(req, res) {
   if (!checkPassword(req)) return res.status(401).json({ error: "인증 실패" });
 
   const supabase = getSupabase();
-  const offset = parseInt(req.query.offset || "0");
-  const limit = parseInt(req.query.limit || "100");
+  const limit = parseInt(req.query.limit || "200");
 
-  const { data, error } = await supabase
-    .from("review_items")
-    .select("id, title, labels, reason")
+  const { data: done } = await supabase
+    .from("gold_annotations")
+    .select("sample_id");
+  const doneIds = (done || []).map((d) => d.sample_id);
+
+  let query = supabase
+    .from("gold_samples")
+    .select("id, title")
     .order("id", { ascending: true })
-    .range(offset, offset + limit - 1);
+    .limit(limit);
 
+  if (doneIds.length > 0) {
+    query = query.not("id", "in", `(${doneIds.join(",")})`);
+  }
+
+  const { data, error } = await query;
   if (error) return res.status(500).json({ error: error.message });
 
-  return res.status(200).json({
-    items: data || [],
-    offset,
-    limit,
-  });
+  return res.status(200).json({ items: data || [] });
 }
